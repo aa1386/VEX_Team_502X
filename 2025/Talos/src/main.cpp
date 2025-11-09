@@ -33,9 +33,16 @@ void pre_auton(void) {
   // Example: clearing encoders, setting servo positions, ...
 
   // Setting the velocity of the intake motors.
-  IntakeFrontMiddle.setVelocity(intakeMotorSpeed, pct);
-  IntakeFrontTop.setVelocity(intakeMotorSpeed, pct);
-  IntakeBack.setVelocity(intakeMotorSpeed, pct);
+  IntakeFrontMiddle.setVelocity(kIntakeMotorSpeed, pct);
+  IntakeFrontTop.setVelocity(kIntakeMotorSpeed, pct);
+  IntakeBack.setVelocity(kIntakeMotorSpeed, pct);
+
+  Left.setStopping(brakeType::brake);
+  Right.setStopping(brakeType::brake);
+
+  IntakeFrontMiddle.setStopping(brakeType::brake);
+  IntakeFrontTop.setStopping(brakeType::brake);
+  IntakeBack.setStopping(brakeType::brake);
 
 
 }
@@ -79,15 +86,9 @@ void usercontrol(void) {
     // values based on feedback from the joysticks.
 
     double leftJoystickFrontBackPosition = Controller.Axis3.position();
-    double rightJoystickLeftRightPosition = Controller.Axis1.position();
-    
-    // This value below represents the sensitivity when turning the drivetrain.
-    // Increase it to increase the sensitivity. Increasing it past 1 will not
-    // change the max turning speed. Making it negative will invert the turning
-    // direction.
-    double turningSensitivity = 0.5;
+    double rightJoystickLeftRightPosition = Controller.Axis1.position() * kDriveTurnSensitivity;
 
-    robotDrive(leftJoystickFrontBackPosition, rightJoystickLeftRightPosition * turningSensitivity);
+    robotDrive(leftJoystickFrontBackPosition, rightJoystickLeftRightPosition);
 
     IntakeState intakeState = NEUTRAL;
     if (Controller.ButtonL1.pressing()) {
@@ -126,3 +127,4 @@ int main() {
     wait(100, msec);
   }
 }
+

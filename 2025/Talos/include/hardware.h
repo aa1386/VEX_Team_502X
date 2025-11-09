@@ -45,7 +45,21 @@ extern vex::pneumatics Pneumatics;
 
 // The speed at which all the motors in the intake subsystem move at,
 // represented as a percentage of the maximum possible speed.
-const double intakeMotorSpeed = 100;
+inline constexpr double kIntakeMotorSpeed = 100.0;
+
+// Deadband applied to joystick commands to prevent the drive motors from
+// responding to very small input noise.
+inline constexpr double kDriveDeadband = 5.0;
+
+// Scales the turning command to make angular movements more manageable.
+inline constexpr double kDriveTurnSensitivity = 0.5;
+
+// Threshold under which the drivetrain will be commanded to brake instead of
+// continuously sending spin commands.
+inline constexpr double kDriveStopThreshold = 1.0;
+
+// Toggle for builds that use a pneumatic ramp.
+inline constexpr bool kUsePneumatics = false;
 
 // The possible states for the intake mechanism state machine and the variable
 // that represents them. 
