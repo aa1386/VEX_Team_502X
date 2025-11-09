@@ -1,10 +1,9 @@
 #include "vex.h"
 #include "hardware.h"
 #include <algorithm>
+#include <cmath>
 
 using namespace vex;
-using std::max;
-using std::min;
 
 brain Brain;
 controller Controller;
@@ -26,107 +25,129 @@ motor_group Right(RightFront, RightMiddle, RightBack);
 
 pneumatics Pneumatics(Brain.ThreeWirePort.A);
 
+namespace {
+
+double applyDeadband(double value) {
+    return (std::fabs(value) < kDriveDeadband) ? 0.0 : value;
+}
+
+double clampPercent(double value) {
+    return std::clamp(value, -100.0, 100.0);
+}
+
+void commandDriveSide(motor_group &group, double speed) {
+    if (std::fabs(speed) <= kDriveStopThreshold) {
+        group.stop(brakeType::brake);
+        return;
+    }
+
+    group.spin(directionType::fwd, speed, velocityUnits::pct);
+}
+
+const char *intakeStatusMessage(IntakeState state) {
+    switch (state) {
+        case INTAKE:
+            return "Intaking";
+        case OUTTAKE_TO_TOP:
+            return "Outtaking to top";
+        case OUTTAKE_TO_BOTTOM:
+            return "Outtaking to bottom";
+        case NEUTRAL:
+            return "Neutral";
+        default:
+            return "Unknown state";
+    }
+}
+
+void updateControllerStatus(IntakeState state) {
+    static bool firstUpdate = true;
+    static IntakeState lastState = NEUTRAL;
+
+    if (!firstUpdate && state == lastState) {
+        return;
+    }
+
+    firstUpdate = false;
+    lastState = state;
+
+    Controller.Screen.clearLine(1);
+    Controller.Screen.setCursor(1, 1);
+    Controller.Screen.print(intakeStatusMessage(state));
+}
+
+void spinIntake(vex::motor &device, directionType direction) {
+    device.spin(direction, kIntakeMotorSpeed, velocityUnits::pct);
+}
+
+void stopIntake(vex::motor &device) {
+    device.stop(brakeType::brake);
+}
+
+void stopAllIntake() {
+    stopIntake(IntakeFrontMiddle);
+    stopIntake(IntakeFrontTop);
+    stopIntake(IntakeBack);
+}
+
+} // namespace
+
 void robotDrive(double frontBackSpeed, double turnSpeed) {
+    const double processedForward = applyDeadband(frontBackSpeed);
+    const double processedTurn = applyDeadband(turnSpeed);
 
-    // The arcade-drive formula
-    double leftSideSpeed = (frontBackSpeed + turnSpeed) * 0.98;
-    double rightSideSpeed = (frontBackSpeed - turnSpeed);
+    const double leftSideSpeed = clampPercent((processedForward + processedTurn) * 0.98);
+    const double rightSideSpeed = clampPercent(processedForward - processedTurn);
 
-    // Caps the velocity value for either side to keep it between -100 and +100.
-    // For example, if leftSideSpeed is somehow set to 300, then the min()
-    // function returns 100, causing the max() function to also return 100 and
-    // capping leftSideSpeed at 100. If leftSideSpeed is 35, however, the
-    // min() function returns 35 and so does the max() function, so
-    // leftSideSpeed falls within this constraint and doesn't change. 
-    leftSideSpeed = max(-100.0, min(leftSideSpeed, 100.0));
-    rightSideSpeed = max(-100.0, min(rightSideSpeed, 100.0));
-
-    if (leftSideSpeed == 0) {
-        Left.stop(brake);
-    } 
-    
-    if (rightSideSpeed == 0) {
-        Right.stop(brake);
-    } 
-
-    Left.spin(fwd, leftSideSpeed, pct);
-    Right.spin(fwd, rightSideSpeed, pct);
-
+    commandDriveSide(Left, leftSideSpeed);
+    commandDriveSide(Right, rightSideSpeed);
 }
 
 void intakeMechanism(IntakeState intakeState) {
-   
-    // Disable if we decide to use pneumatics
-    bool noNeedForPneumatics = true;
-
-    // If we're using pneumatics, this remembers whether or not the piston has
-    // been extended to change the orientation of the ramp
     static bool extended = false;
-        
+
+    auto setRampExtended = [&](bool shouldExtend) {
+        if (!kUsePneumatics) {
+            extended = shouldExtend;
+            return;
+        }
+
+        if (extended != shouldExtend) {
+            Pneumatics.set(shouldExtend);
+            extended = shouldExtend;
+        }
+    };
+
     switch (intakeState) {
-        
         case INTAKE:
-            if (noNeedForPneumatics) {
-                // The back roller pulls the block into the hopper
-                IntakeBack.spin(fwd);
-                if (extended == false) {
-                    // In theory extends the back of the ramp to allow for
-                    // intaking
-                    Pneumatics.set(true);
-                }
-            } else {
-                // The back roller pushes the block upwards
-                IntakeBack.spin(reverse);
-            }
-            // The middle roller pulls the block in towards the hopper
-            IntakeFrontMiddle.spin(fwd);
-            Controller.Screen.clearLine(1);
-            Controller.Screen.setCursor(1, 1);
-            Controller.Screen.print("Intaking");
+            spinIntake(IntakeBack, directionType::fwd);
+            spinIntake(IntakeFrontMiddle, directionType::fwd);
+            stopIntake(IntakeFrontTop);
+            setRampExtended(true);
             break;
 
         case OUTTAKE_TO_TOP:
-            // Every roller works to push the block upwards and to the front
-            IntakeFrontMiddle.spin(fwd);
-            IntakeBack.spin(reverse);
-            IntakeFrontTop.spin(fwd);
-            if (noNeedForPneumatics == false && extended) {
-                // In theory retracts the back of the ramp to allow for
-                // outtaking
-                Pneumatics.set(false);
-            }
-            Controller.Screen.clearLine(1);
-            Controller.Screen.setCursor(1, 1);
-            Controller.Screen.print("Outtaking to top"); 
+            spinIntake(IntakeFrontMiddle, directionType::fwd);
+            spinIntake(IntakeBack, directionType::rev);
+            spinIntake(IntakeFrontTop, directionType::fwd);
+            setRampExtended(false);
             break;
 
         case OUTTAKE_TO_BOTTOM:
-            // The middle and back rollers work to pull blocks out of the hopper
-            // and push them out of the intake through the bottom
-            IntakeFrontMiddle.spin(reverse);
-            IntakeBack.spin(reverse);
-            Controller.Screen.clearLine(1);
-            Controller.Screen.setCursor(1, 1);
-            Controller.Screen.print("Outtaking to bottom");
+            spinIntake(IntakeFrontMiddle, directionType::rev);
+            spinIntake(IntakeBack, directionType::rev);
+            stopIntake(IntakeFrontTop);
+            setRampExtended(false);
             break;
 
         case NEUTRAL:
-            // Nothing happens and the motors stop moving
-            IntakeFrontMiddle.stop(brake);
-            IntakeFrontTop.stop(brake);
-            IntakeBack.stop(brake);
-            Controller.Screen.clearLine(1);
-            Controller.Screen.setCursor(1, 1);
-            Controller.Screen.print("Neutral");
+            stopAllIntake();
             break;
 
         default:
-            // In theory you should never reach this stage
-            Controller.Screen.clearLine(1);
-            Controller.Screen.setCursor(1, 1);
-            Controller.Screen.print("You shouldn't be here");
+            stopAllIntake();
+            setRampExtended(false);
             break;
-
     }
 
+    updateControllerStatus(intakeState);
 }
